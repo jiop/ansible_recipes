@@ -1,0 +1,9 @@
+timezone: 'Europe/Paris'
+user_password: "asdsadasdasdasdas"
+user_comment: "asdasda"
+user_name: "asdadas"
+public_key: "ssdskfldnslcjnsdnc"
+nodejs_version: "0.12"
+ansible_connection: ssh
+ansible_ssh_user: root
+ansible_ssh_host: 123.123.123.123

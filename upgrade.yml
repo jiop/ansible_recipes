@@ -1,0 +1,7 @@
+- name: Upgrade Ubuntu droplet
+  hosts: webservers
+  gather_facts: yes
+  sudo: yes
+  tasks:
+    - name: upgrade a server
+      apt: upgrade=full update_cache=yes

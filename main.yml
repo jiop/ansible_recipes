@@ -1,0 +1,116 @@
+- name: Setup Ubuntu droplet
+  hosts: webservers
+  gather_facts: yes
+  sudo: yes
+  tasks:
+    - name: install dependencies
+      apt: pkg={{ item }} update_cache=yes
+      with_items:
+        - build-essential
+        - openssl
+        - libssl-dev
+        - pkg-config
+        - whois
+        - git
+        - apt-transport-https
+        - ca-certificates
+        - apache2
+
+    # Install nodejs latest version
+    - name: Ensure the system can use the HTTPS transport for APT
+      stat: path=/usr/lib/apt/methods/https
+      register: apt_https_transport
+
+    - name: Install HTTPS transport for APT
+      apt: pkg=apt-transport-https state=installed
+      when: not apt_https_transport.stat.exists
+
+    - name: Import the NodeSource GPG key into apt
+      apt_key: url=https://deb.nodesource.com/gpgkey/nodesource.gpg.key state=present
+
+    - name: Add NodeSource deb repository
+      apt_repository: repo='deb https://deb.nodesource.com/node_{{ nodejs_version }} {{ ansible_distribution_release }} main' state=present
+
+    - name: Install Node.js
+      apt: pkg=nodejs={{ nodejs_version }}.* state=installed update_cache=yes
+
+    # Install Passenger
+    - name: Add Passenger deb repository
+      apt_repository: repo='deb https://oss-binaries.phusionpassenger.com/apt/passenger {{ ansible_distribution_release }} main' state=present
+
+    - name: Install Node.js
+      apt: pkg={{ item }} state=present update_cache=yes
+      with_items:
+        - passenger
+        - libapache2-mod-passenger
+
+    # Setup user
+    - name: Create user
+      user:
+        name: '{{ user_name }}'
+        comment: '{{ user_comment }}'
+        password: '{{ user_password }}'
+        shell: /bin/bash
+        generate_ssh_key: yes
+        ssh_key_bits: 2048
+        ssh_key_file: .ssh/id_rsa
+        groups: 'sudo'
+
+    - name: Create ssh folder
+      file: path='/home/{{ user_name }}/.ssh' state=directory mode=0700
+
+    - name: Add public key to authorized key
+      lineinfile:
+        dest: "/home/{{ user_name }}/.ssh/authorized_keys"
+        line: "{{ public_key }}"
+        state: present
+        create: yes
+        backup: yes
+
+    # Setup timezone
+    - name: check current timezone
+      shell: cat /etc/timezone
+      register: current_zone
+      always_run: yes
+      changed_when: false
+
+    - name: Set timezone variables
+      copy: content='{{ timezone }}'
+            dest=/etc/timezone
+            owner=root
+            group=root
+            mode=0644
+            backup=yes
+      when: current_zone.stdout != timezone
+      notify:
+        - update timezone
+
+    # Setup NTP server synchronization
+    - name: install ntp
+      apt: pkg=ntp update_cache=yes
+
+    # Setup Firewall
+    - name: allow ssh on Firewall
+      ufw: rule=limit port=ssh proto=tcp
+
+    - name: allow web 80 on Firewall
+      ufw: rule=allow port=80 proto=tcp
+
+    - name: allow web 443 on Firewall
+      ufw: rule=allow port=443 proto=tcp
+
+    - name: reload ufw and enable it at boot
+      ufw: state=enabled
+
+    # Last configuration for ssh. Disable access with root user
+    - name: Disable root login via ssh
+      lineinfile: dest=/etc/ssh/sshd_config regexp="^PermitRootLogin (yes|no)$" line="PermitRootLogin no"
+      notify:
+        - service ssh restart
+
+  handlers:
+    - name: service ssh restart
+      service: name=ssh state=restarted
+
+    - name: update timezone
+      command: dpkg-reconfigure --frontend noninteractive tzdata
