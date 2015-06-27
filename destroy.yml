@@ -1,0 +1,16 @@
+- name: Setup Ubuntu droplet
+  hosts: orchestrators
+  gather_facts: no
+  tasks:
+    - name: destroy ubuntu 14.04 droplet on digital_ocean
+      digital_ocean: >
+        name=test-ubuntu
+        state=absent
+        api_token="{{ do_api_token }}"
+        unique_name=yes
+        wait_timeout=500
+      register: destroy_result
+
+    - pause: seconds=40
+
+    # - wait_for: port=22 host=
