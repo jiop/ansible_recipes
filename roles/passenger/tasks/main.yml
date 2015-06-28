@@ -1,0 +1,9 @@
+---
+- name: Add Passenger deb repository
+  apt_repository: repo='deb https://oss-binaries.phusionpassenger.com/apt/passenger {{ ansible_distribution_release }} main' state=present
+
+- name: Install Passenger
+  apt: pkg={{ item }} state=present update_cache=yes force=yes
+  with_items:
+    - passenger
+    - libapache2-mod-passenger

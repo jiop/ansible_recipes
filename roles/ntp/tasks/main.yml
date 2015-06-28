@@ -1,0 +1,22 @@
+---
+# Setup timezone
+- name: check current timezone
+  shell: cat /etc/timezone
+  register: current_zone
+  always_run: yes
+  changed_when: false
+
+- name: Set timezone variables
+  copy: content='{{ timezone }}'
+        dest=/etc/timezone
+        owner=root
+        group=root
+        mode=0644
+        backup=yes
+  when: current_zone.stdout != timezone
+  notify:
+    - update timezone
+
+# Setup NTP server synchronization
+- name: install ntp
+  apt: pkg=ntp update_cache=yes

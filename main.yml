@@ -1,8 +1,85 @@
 - name: Setup Ubuntu droplet
+  hosts: orchestrators
+  gather_facts: no
+  tasks:
+    - name: create ubuntu 14.04 droplet on digital_ocean
+      digital_ocean: >
+        state=present
+        command=droplet
+        name=test-ubuntu
+        api_token="{{ do_api_token }}"
+        size_id=512mb
+        region_id=fra1
+        image_id=11836690
+        wait=yes
+        unique_name=yes
+        ssh_key_ids=912686
+      register: new_droplet
+      always_run: yes
+
+    - name: add the droplet to webservers host group
+      add_host: name=test-ubuntu groups=webservers ansible_ssh_host={{ new_droplet.droplet.ip_address }}
+
+    - name: temporize playbook to wait for true provisionning
+      pause: seconds=10
+
+- name: determine user available to log with
+  hosts: orchestrators
+  gather_facts: no
+  tasks:
+    - name: retrieve key from distant host
+      command: ssh-keyscan "{{ new_droplet.droplet.ip_address }}"
+      register: key_scan_result
+      failed_when: false
+      changed_when: false
+
+    - name: check if distant host key to known_hosts
+      command: "grep \"{{ key_scan_result.stdout }}\" ~/.ssh/known_hosts"
+      register: key_is_present
+      changed_when: key_is_present.rc != 0
+      failed_when: false
+
+    - name: remove previously registered key to known_hosts
+      lineinfile:
+        dest: "~/.ssh/known_hosts"
+        regexp: "^.*{{ new_droplet.droplet.ip_address }}.*$"
+        state: absent
+        backup: yes
+      when: key_is_present|changed
+
+    - name: register distant host key to known_hosts
+      lineinfile:
+        dest: "~/.ssh/known_hosts"
+        line: "{{ key_scan_result.stdout }}"
+        state: present
+        backup: yes
+      when: key_is_present|changed
+
+    - name: try to ssh with root user
+      command: ssh -oBatchMode=yes {{ distant_root_name }}@{{ new_droplet.droplet.ip_address }} 'echo {{ distant_root_name }}'
+      register: root_ssh_cmd_result
+      ignore_errors: true
+
+    - name: register real root user to localhost facts
+      set_fact: selected_distant_user_name="{{ root_ssh_cmd_result.stdout }}"
+      when: root_ssh_cmd_result|success
+
+    - name: try to ssh with other user
+      command: ssh -oBatchMode=yes {{ distant_admin_name }}@{{ new_droplet.droplet.ip_address }} 'echo {{ distant_admin_name }}'
+      register: admin_ssh_cmd_result
+      ignore_errors: true
+      when: root_ssh_cmd_result|failed
+
+    - name: register real root user to localhost facts
+      set_fact: selected_distant_user_name="{{ admin_ssh_cmd_result.stdout }}"
+      when: root_ssh_cmd_result|failed and admin_ssh_cmd_result|success
+
+- name: Setup Ubuntu droplet
   hosts: webservers
+  user: "{{ hostvars['localhost']['selected_distant_user_name'] }}"
   gather_facts: yes
   sudo: yes
-  tasks:
+  pre_tasks:
     - name: install dependencies
       apt: pkg={{ item }} update_cache=yes
       with_items:
@@ -14,35 +91,6 @@
         - git
         - apt-transport-https
         - ca-certificates
-        - apache2
-
-    # Install nodejs latest version
-    - name: Ensure the system can use the HTTPS transport for APT
-      stat: path=/usr/lib/apt/methods/https
-      register: apt_https_transport
-
-    - name: Install HTTPS transport for APT
-      apt: pkg=apt-transport-https state=installed
-      when: not apt_https_transport.stat.exists
-
-    - name: Import the NodeSource GPG key into apt
-      apt_key: url=https://deb.nodesource.com/gpgkey/nodesource.gpg.key state=present
-
-    - name: Add NodeSource deb repository
-      apt_repository: repo='deb https://deb.nodesource.com/node_{{ nodejs_version }} {{ ansible_distribution_release }} main' state=present
-
-    - name: Install Node.js
-      apt: pkg=nodejs={{ nodejs_version }}.* state=installed update_cache=yes
-
-    # Install Passenger
-    - name: Add Passenger deb repository
-      apt_repository: repo='deb https://oss-binaries.phusionpassenger.com/apt/passenger {{ ansible_distribution_release }} main' state=present
-
-    - name: Install Node.js
-      apt: pkg={{ item }} state=present update_cache=yes
-      with_items:
-        - passenger
-        - libapache2-mod-passenger
 
     # Setup user
     - name: Create user
@@ -67,50 +115,21 @@
         create: yes
         backup: yes
 
-    # Setup timezone
-    - name: check current timezone
-      shell: cat /etc/timezone
-      register: current_zone
-      always_run: yes
-      changed_when: false
-
-    - name: Set timezone variables
-      copy: content='{{ timezone }}'
-            dest=/etc/timezone
-            owner=root
-            group=root
-            mode=0644
-            backup=yes
-      when: current_zone.stdout != timezone
-      notify:
-        - update timezone
-
-    # Setup NTP server synchronization
-    - name: install ntp
-      apt: pkg=ntp update_cache=yes
-
-    # Setup Firewall
-    - name: allow ssh on Firewall
-      ufw: rule=limit port=ssh proto=tcp
-
-    - name: allow web 80 on Firewall
-      ufw: rule=allow port=80 proto=tcp
-
-    - name: allow web 443 on Firewall
-      ufw: rule=allow port=443 proto=tcp
-
-    - name: reload ufw and enable it at boot
-      ufw: state=enabled
-
     # Last configuration for ssh. Disable access with root user
     - name: Disable root login via ssh
       lineinfile: dest=/etc/ssh/sshd_config regexp="^PermitRootLogin (yes|no)$" line="PermitRootLogin no"
       notify:
         - service ssh restart
+  roles:
+    - ntp
+    - nodejs
+    - apache2
+    - passenger
+    - ufw
 
   handlers:
     - name: service ssh restart
-      service: name=ssh state=restarted
-
-    - name: update timezone
-      command: dpkg-reconfigure --frontend noninteractive tzdata
+      command: service ssh restart
+      register: ssh_service_restart
+      failed_when: ssh_service_restart.rc != 0
+      changed_when: false

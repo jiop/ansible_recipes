@@ -1,0 +1,13 @@
+---
+# Setup Firewall
+- name: allow ssh on Firewall
+  ufw: rule=limit port=ssh proto=tcp
+  notify: reload ufw
+
+- name: allow web 80 on Firewall
+  ufw: rule=allow port=80 proto=tcp
+  notify: reload ufw
+
+- name: allow web 443 on Firewall
+  ufw: rule=allow port=443 proto=tcp
+  notify: reload ufw
