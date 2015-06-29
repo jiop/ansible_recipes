@@ -1,6 +1,3 @@
-
-host_vars/testnightrambler
-
 inventory
-
 notes
+host_vars/*
